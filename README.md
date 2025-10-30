@@ -26,7 +26,7 @@
 
 ## Overview
 
-**AheadOfItsTime** is a benchmarking and analysis project that investigates the performance and flexibility tradeoffs between Ahead-of-Time (AOT) and Just-in-Time (JIT) compilation strategies in modern deep learning frameworks. Through systematic experimentation with CNNs on computer vision datasets (MNIST, CIFAR-10) and RNNs on sequential/NLP datasets (IMDB, Penn Treebank), we quantify how different compilation approaches impact:
+**AheadOfItsTime** is a benchmarking and analysis project that investigates the performance and flexibility tradeoffs between Ahead-of-Time (AOT) and Just-in-Time (JIT) compilation strategies in modern deep learning frameworks. Through systematic experimentation with CNNs on computer vision datasets (MNIST, CIFAR-10) and RNNs on sequential/NLP datasets (IMDB, WikiText-2), we quantify how different compilation approaches impact:
 
 - **Inference latency** (end-to-end prediction time)
 - **Memory consumption** (peak and average usage)
@@ -181,11 +181,11 @@ Modern frameworks increasingly blur these boundaries:
    - Tests recurrent operator optimization and variable-length handling
    - Highlights dynamic unrolling challenges
 
-2. **GRU Language Model** (Penn Treebank)
-   - Character-level or word-level next-token prediction
+2. **GRU Language Model** (WikiText-2)
+   - Word-level language modeling on Wikipedia text
    - Stacked GRU architecture (2-3 layers)
    - ~5M parameters
-   - Tests sequential dependencies and gradient flow
+   - Tests sequential dependencies and long-range context modeling
    - Exposes compilation overhead for multi-layer RNNs
 
 ### Datasets
@@ -196,7 +196,7 @@ Modern frameworks increasingly blur these boundaries:
 
 **RNN Datasets:**
 - **IMDB Reviews**: 25K training, 25K test movie reviews (sentiment classification)
-- **Penn Treebank (PTB)**: ~1M word corpus for language modeling
+- **WikiText-2**: Wikipedia text corpus for language modeling (~2M tokens total, with train/validation/test splits)
 
 All datasets are well-established benchmarks, eliminating confounds from data complexity while representing canonical use cases for each architecture type.
 
@@ -257,8 +257,7 @@ AheadOfItsTime/
 │   ├── mnist/
 │   ├── cifar10/
 │   ├── imdb/
-│   ├── ptb/                   # Penn Treebank
-│   ├── wikitext2/
+│   ├── wikitext/              # WikiText-2
 │   └── download_datasets.py
 │
 ├── models/                     # Model implementations
@@ -275,7 +274,7 @@ AheadOfItsTime/
 │   ├── train_mnist_lenet.py
 │   ├── train_cifar_resnet.py
 │   ├── train_imdb_lstm.py
-│   ├── train_ptb_gru.py
+│   ├── train_wikitext_gru.py
 │   └── config/                # Training configurations
 │
 ├── conversion/                 # Framework conversion scripts
@@ -404,13 +403,13 @@ python training/train_imdb_lstm.py \
     --hidden-dim 256 \
     --save-path checkpoints/pytorch/lstm_imdb.pth
 
-# Train GRU language model on Penn Treebank
-python training/train_ptb_gru.py \
+# Train GRU language model on WikiText-2
+python training/train_wikitext_gru.py \
     --epochs 40 \
     --batch-size 32 \
     --embedding-dim 200 \
     --hidden-dim 200 \
-    --save-path checkpoints/pytorch/gru_ptb.pth
+    --save-path checkpoints/pytorch/gru_wikitext.pth
 ```
 
 ### Converting Models
