@@ -9,10 +9,11 @@
 1. [Overview](#overview)
 2. [Motivation](#motivation)
 3. [Background](#background)
-   - [Static Graphs](#static-graphs)
-   - [Dynamic Graphs](#dynamic-graphs)
-   - [AOT Compilation](#aot-compilation)
-   - [JIT Compilation](#jit-compilation)
+   - [Static Computation Graphs](#static-computation-graphs)
+   - [Dynamic Computation Graphs](#dynamic-computation-graphs)
+   - [Ahead-of-Time (AOT) Compilation](#ahead-of-time-aot-compilation)
+   - [Just-in-Time (JIT) Compilation](#just-in-time-jit-compilation)
+   - [Hybrid Approaches](#hybrid-approaches)
 4. [Project Objectives](#project-objectives)
 5. [Technical Approach](#technical-approach)
 6. [Architecture](#architecture)
@@ -493,12 +494,6 @@ python analysis/report_generator.py \
 - **Ron Kibel**
 - **Shane Dirksen**
 
-
-
-
-
-
+---
 
 MIT License - see [LICENSE](LICENSE) file for details.
-
----
