@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# Data
+data/mnist/
+data/cifar10/
+data/imdb/
+data/wikitext/
+*.csv
+*.h5
+*.hdf5
+
+# Model checkpoints
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.pb
+*.onnx
+*.tflite
+*.engine
+*.plan
+
+# Results
+results/benchmarks/
+results/plots/*.png
+results/plots/*.pdf
+results/reports/*.pdf
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+wandb/
+mlruns/
+
+# Environment
+.env
+.env.local
+
+# Profiling
+*.prof
+*.lprof
+*.nsys-rep
+*.qdrep
+*.nvvp
+
+# Temporary files
+tmp/
+temp/
+*.tmp
