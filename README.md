@@ -328,9 +328,6 @@ AheadOfItsTime/
     ├── API.md                 # Code API documentation
     ├── FINDINGS.md            # Results and analysis
     ├── resources.md           # Additional resources
-    ├── papers.md              # Related research papers
-    ├── links.md               # Useful links
-    └── resources/             # Resource files
 ```
 
 ### Key Components
