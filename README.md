@@ -363,9 +363,17 @@ AheadOfItsTime/
 - [x] Train all models, validate accuracy, checkpoint saving
 
 ### Week 2: Multi-Framework
-- TorchScript conversion and validation
-- TensorFlow/ONNX conversion
-- PyTorch 2.0 integration, testing
+- PyTorch Ecosystem
+  - [x] TorchScript (JIT and traced)
+  - [ ] PyTorch 2.0 `torch.compile` (hybrid)
+- TensorFlow Ecosystem
+  - [ ] TensorFlow SavedModel + graph optimization (AOT)
+  - [ ] TensorFlow Lite (AOT for mobile/edge)
+- ONNX Runtime
+  - [ ] Standard ONNX Runtime (AOT with graph optimization)
+  - [ ] ONNX Runtime with different execution providers (CPU, CUDA)
+- TensorRT (stretch goal)
+  - [ ] TensorRT optimized engines (aggressive AOT)
 
 ### Week 3: Benchmarking
 - Build benchmarking harness
