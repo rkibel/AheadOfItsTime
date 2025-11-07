@@ -360,9 +360,10 @@ AheadOfItsTime/
 ## Timeline
 
 ### Week 1: Foundation
-- Setup, data pipeline (CNNs + RNNs), LeNet/ResNet in PyTorch
-- LSTM sentiment & GRU language models, text preprocessing
-- Train all models, validate accuracy, checkpoint saving
+- [x] Setup, data pipeline (CNNs + RNNs), LeNet/ResNet in PyTorch
+- [x] LSTM sentiment & GRU language models, text preprocessing
+- [x] Add background resources documentation
+- [x] Train all models, validate accuracy, checkpoint saving
 
 ### Week 2: Multi-Framework
 - TorchScript conversion and validation
