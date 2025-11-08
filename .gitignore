@@ -48,6 +48,7 @@ checkpoints/
 *.tflite
 *.engine
 *.plan
+*.onnx
 
 # Results
 results/benchmarks/
