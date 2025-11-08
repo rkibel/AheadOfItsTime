@@ -45,7 +45,6 @@ checkpoints/
 *.pt
 *.ckpt
 *.pb
-*.onnx
 *.tflite
 *.engine
 *.plan
