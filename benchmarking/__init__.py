@@ -12,7 +12,6 @@ Supports multiple frameworks:
 - TorchScript (JIT)
 - PyTorch 2.0 torch.compile
 - ONNX Runtime
-- TensorFlow SavedModel
 """
 
 __version__ = "0.1.0"

@@ -65,12 +65,6 @@ class BenchmarkRunner:
         except ImportError:
             pass
         
-        try:
-            import tensorflow as tf
-            metadata['frameworks']['tensorflow'] = tf.__version__
-        except ImportError:
-            pass
-        
         return metadata
     
     def run(self) -> Dict[str, Any]:
