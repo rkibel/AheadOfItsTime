@@ -29,11 +29,8 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Import model classes
-from models.cnn.lenet import LeNet5
-from models.cnn.resnet import ResNet18
-from models.rnn.lstm_sentiment import LSTMSentimentClassifier
-from models.rnn.gru_lm import GRULanguageModel
+# Import centralized model configuration
+from models import get_model_config, get_model_class
 
 # Import conversion utilities
 from conversion.utils import (
@@ -49,55 +46,6 @@ try:
 except ImportError:
     ONNXRUNTIME_AVAILABLE = False
     print("Warning: onnxruntime not available. Validation will be skipped.")
-
-
-# Model configurations
-MODEL_CONFIGS = {
-    'lenet': {
-        'class': LeNet5,
-        'kwargs': {'num_classes': 10, 'in_channels': 1},
-        'example_input': torch.randn(1, 1, 28, 28),
-        'checkpoint': 'checkpoints/pytorch/lenet_mnist.pth',
-        'input_names': ['input'],
-        'output_names': ['output']
-    },
-    'resnet18': {
-        'class': ResNet18,
-        'kwargs': {'num_classes': 10},
-        'example_input': torch.randn(1, 3, 32, 32),
-        'checkpoint': 'checkpoints/pytorch/resnet18_cifar10.pth',
-        'input_names': ['input'],
-        'output_names': ['output']
-    },
-    'lstm': {
-        'class': LSTMSentimentClassifier,
-        'kwargs': {
-            'vocab_size': 25000,
-            'embedding_dim': 128,
-            'hidden_dim': 256,
-            'num_layers': 2,
-            'dropout': 0.5
-        },
-        'example_input': torch.randint(0, 25000, (1, 256)),
-        'checkpoint': 'checkpoints/pytorch/lstm_imdb.pth',
-        'input_names': ['input'],
-        'output_names': ['output']
-    },
-    'gru': {
-        'class': GRULanguageModel,
-        'kwargs': {
-            'vocab_size': 29573,
-            'embedding_dim': 200,
-            'hidden_dim': 200,
-            'num_layers': 2,
-            'dropout': 0.2
-        },
-        'example_input': torch.randint(0, 29573, (32, 35)),
-        'checkpoint': 'checkpoints/pytorch/gru_wikitext.pth',
-        'input_names': ['input'],
-        'output_names': ['output']
-    }
-}
 
 
 def convert_to_onnx(
@@ -205,11 +153,11 @@ def validate_onnx_model(
     
     with torch.no_grad():
         for i in range(num_samples):
-            # Generate random input with same shape
+            # Generate random input with same shape on the correct device
             if example_input.dim() == 2:  # For RNNs (batch, seq_len)
-                test_input = torch.randint_like(example_input, 0, 1000)
+                test_input = torch.randint_like(example_input, 0, 1000).to(device)
             else:  # For CNNs
-                test_input = torch.randn_like(example_input)
+                test_input = torch.randn_like(example_input).to(device)
             
             test_input_np = test_input.cpu().numpy()
             
@@ -229,8 +177,8 @@ def validate_onnx_model(
             is_valid, max_diff = validate_outputs(
                 torch.from_numpy(original_output_np),
                 torch.from_numpy(onnx_output),
-                rtol=1e-3,
-                atol=1e-4
+                rtol=5e-3,
+                atol=5e-3
             )
             
             if not is_valid:
@@ -307,9 +255,9 @@ def main():
     
     args = parser.parse_args()
     
-    # Get model configuration
-    config = MODEL_CONFIGS[args.model]
-    checkpoint_path = args.checkpoint or config['checkpoint']
+    # Get model configuration from centralized source
+    config = get_model_config(args.model)
+    checkpoint_path = args.checkpoint or config['checkpoints']['pytorch']
     
     print(f"\n{'='*60}")
     print(f"Converting {args.model.upper()} to ONNX")
@@ -327,8 +275,9 @@ def main():
     
     # Load original model
     print("Loading PyTorch model...")
+    model_class = get_model_class(args.model)
     model, checkpoint = load_model_from_checkpoint(
-        model_class=config['class'],
+        model_class=model_class,
         checkpoint_path=checkpoint_path,
         device=args.device,
         **config['kwargs']

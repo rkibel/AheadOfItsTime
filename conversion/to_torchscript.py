@@ -28,11 +28,8 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Import model classes
-from models.cnn.lenet import LeNet5
-from models.cnn.resnet import ResNet18
-from models.rnn.lstm_sentiment import LSTMSentimentClassifier
-from models.rnn.gru_lm import GRULanguageModel
+# Import centralized model configuration
+from models import get_model_config, get_model_class
 
 # Import conversion utilities
 from conversion.utils import (
@@ -40,47 +37,6 @@ from conversion.utils import (
     validate_outputs,
     create_output_directory
 )
-
-
-# Model configurations
-MODEL_CONFIGS = {
-    'lenet': {
-        'class': LeNet5,
-        'kwargs': {'num_classes': 10, 'in_channels': 1},
-        'example_input': torch.randn(1, 1, 28, 28),
-        'checkpoint': 'checkpoints/pytorch/lenet_mnist.pth'
-    },
-    'resnet18': {
-        'class': ResNet18,
-        'kwargs': {'num_classes': 10},
-        'example_input': torch.randn(1, 3, 32, 32),
-        'checkpoint': 'checkpoints/pytorch/resnet18_cifar10.pth'
-    },
-    'lstm': {
-        'class': LSTMSentimentClassifier,
-        'kwargs': {
-            'vocab_size': 25000,
-            'embedding_dim': 128,
-            'hidden_dim': 256,
-            'num_layers': 2,
-            'dropout': 0.5
-        },
-        'example_input': torch.randint(0, 25000, (1, 256)),
-        'checkpoint': 'checkpoints/pytorch/lstm_imdb.pth'
-    },
-    'gru': {
-        'class': GRULanguageModel,
-        'kwargs': {
-            'vocab_size': 29573,
-            'embedding_dim': 200,
-            'hidden_dim': 200,
-            'num_layers': 2,
-            'dropout': 0.2
-        },
-        'example_input': torch.randint(0, 29573, (32, 35)),
-        'checkpoint': 'checkpoints/pytorch/gru_wikitext.pth'
-    }
-}
 
 
 def convert_to_torchscript(
@@ -228,9 +184,9 @@ def main():
     
     args = parser.parse_args()
     
-    # Get model configuration
-    config = MODEL_CONFIGS[args.model]
-    checkpoint_path = args.checkpoint or config['checkpoint']
+    # Get model configuration from centralized source
+    config = get_model_config(args.model)
+    checkpoint_path = args.checkpoint or config['checkpoints']['pytorch']
     
     print(f"\n{'='*60}")
     print(f"Converting {args.model.upper()} to TorchScript")
@@ -246,8 +202,9 @@ def main():
     
     # Load original model
     print("Loading PyTorch model...")
+    model_class = get_model_class(args.model)
     model, checkpoint = load_model_from_checkpoint(
-        model_class=config['class'],
+        model_class=model_class,
         checkpoint_path=checkpoint_path,
         device=args.device,
         **config['kwargs']
