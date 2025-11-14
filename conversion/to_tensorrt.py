@@ -1,449 +1,348 @@
 """
-Convert PyTorch models to TensorRT optimized engines.
-
-TensorRT provides:
-- Aggressive AOT compilation with kernel fusion
-- INT8/FP16 quantization support
-- Optimized execution for NVIDIA GPUs
-- Maximum inference performance
-
-Note: TensorRT conversion typically goes through ONNX as an intermediate format.
-This script requires:
-- NVIDIA GPU with CUDA support
-- TensorRT library installed
-- onnx-tensorrt or trtexec utility
+Convert ONNX models to TensorRT engines with PyCUDA validation.
 
 Usage:
-    # Convert LeNet-5 to TensorRT
-    python conversion/to_tensorrt.py --model lenet \\
-        --checkpoint checkpoints/pytorch/lenet_mnist.pth \\
-        --output checkpoints/tensorrt/lenet.engine
-
-    # Convert with FP16 precision
-    python conversion/to_tensorrt.py --model resnet18 \\
-        --checkpoint checkpoints/pytorch/resnet18_cifar10.pth \\
-        --output checkpoints/tensorrt/resnet18.engine \\
-        --precision fp16
+    python conversion/to_tensorrt.py --model lenet
+    python conversion/to_tensorrt.py --model all
+    python conversion/to_tensorrt.py --model resnet18 --tolerance 1e-4
 """
 
 import argparse
-import torch
-import time
 import sys
-import os
-import subprocess
+import shutil
+import time
+import numpy as np
 from pathlib import Path
 
-# Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# Import centralized model configuration
 from models import get_model_config, get_model_class
 
-# Import conversion utilities
-from conversion.utils import (
-    load_model_from_checkpoint,
-    validate_outputs,
-    create_output_directory
-)
-
-# Try to import TensorRT
 try:
     import tensorrt as trt
-    TENSORRT_AVAILABLE = True
-except ImportError:
-    TENSORRT_AVAILABLE = False
-    print("Warning: TensorRT Python bindings not available. "
-          "Will attempt to use trtexec command-line tool.")
+    import pycuda.driver as cuda
+    import pycuda.autoinit
+    import onnx
+    from onnx import helper
+except ImportError as e:
+    print(f"ERROR: Missing required package: {e}")
+    sys.exit(1)
 
 
-def convert_pytorch_to_onnx(
-    model: torch.nn.Module,
-    example_input: torch.Tensor,
-    onnx_path: str,
-    opset_version: int = 13,
-    device: str = 'cpu'
-) -> str:
-    """
-    Convert PyTorch model to ONNX (intermediate step for TensorRT).
-    
-    Args:
-        model: PyTorch model in eval mode
-        example_input: Example input tensor
-        onnx_path: Path to save ONNX model
-        opset_version: ONNX opset version (TensorRT supports up to opset 13)
-        device: Device to run conversion on
+class TensorRTLogger(trt.ILogger):
+    def __init__(self):
+        trt.ILogger.__init__(self)
+        self.errors = []
         
-    Returns:
-        Path to ONNX model
-    """
-    model = model.to(device)
-    example_input = example_input.to(device)
-    
-    print("Step 1: Converting PyTorch to ONNX...")
-    start_time = time.time()
-    
-    torch.onnx.export(
-        model,
-        example_input,
-        onnx_path,
-        input_names=['input'],
-        output_names=['output'],
-        opset_version=opset_version,
-        do_constant_folding=True,
-        export_params=True,
-        verbose=False
-    )
-    
-    conversion_time = time.time() - start_time
-    print(f"  ✓ ONNX conversion completed in {conversion_time:.3f}s")
-    
-    return onnx_path
+    def log(self, severity, msg):
+        if severity == trt.ILogger.ERROR:
+            self.errors.append(msg)
+            print(f"[TRT ERROR] {msg}")
+        elif severity == trt.ILogger.WARNING:
+            print(f"[TRT WARNING] {msg}")
+        elif severity == trt.ILogger.INFO:
+            print(f"[TRT INFO] {msg}")
 
 
-def convert_onnx_to_tensorrt_python(
-    onnx_path: str,
-    engine_path: str,
-    precision: str = 'fp32',
-    max_batch_size: int = 1,
-    max_workspace_size: int = 1 << 30  # 1GB
-) -> None:
-    """
-    Convert ONNX model to TensorRT engine using Python API.
+def fix_rnn_onnx(onnx_path: str, output_path: str) -> bool:
+    """Add Cast nodes to convert float32 inputs to int64 for RNN embeddings."""
+    model = onnx.load(onnx_path)
+    graph = model.graph
     
-    Args:
-        onnx_path: Path to ONNX model
-        engine_path: Path to save TensorRT engine
-        precision: Precision mode ('fp32', 'fp16', 'int8')
-        max_batch_size: Maximum batch size for optimization
-        max_workspace_size: Maximum workspace size in bytes
-    """
-    if not TENSORRT_AVAILABLE:
-        raise ImportError("TensorRT Python bindings not available. "
-                         "Use --use-trtexec flag or install tensorrt package.")
+    has_int_input = any(inp.type.tensor_type.elem_type == onnx.TensorProto.INT64 
+                        for inp in graph.input)
+    if not has_int_input:
+        return False
     
-    print("Step 2: Converting ONNX to TensorRT engine (Python API)...")
-    start_time = time.time()
+    print("  ✓ Adding cast nodes for RNN embeddings...")
+    modified_nodes = []
+    input_remap = {}
     
-    # Create TensorRT logger
-    logger = trt.Logger(trt.Logger.WARNING)
+    for input_tensor in graph.input:
+        if input_tensor.type.tensor_type.elem_type == onnx.TensorProto.INT64:
+            orig_name = input_tensor.name
+            float_name = orig_name + "_float32"
+            cast_name = orig_name + "_int64"
+            
+            input_tensor.type.tensor_type.elem_type = onnx.TensorProto.FLOAT
+            input_tensor.name = float_name
+            
+            modified_nodes.append(helper.make_node('Cast', [float_name], [cast_name], 
+                                                   to=onnx.TensorProto.INT64))
+            input_remap[orig_name] = cast_name
     
-    # Create builder and network
+    # Update node inputs
+    for node in graph.node:
+        for i, inp in enumerate(node.input):
+            if inp in input_remap:
+                node.input[i] = input_remap[inp]
+    
+    # Prepend cast nodes
+    old_nodes = list(graph.node)
+    del graph.node[:]
+    graph.node.extend(modified_nodes + old_nodes)
+    onnx.save(model, output_path)
+    return True
+
+
+def build_engine(onnx_path: str, engine_path: str) -> bool:
+    """Build TensorRT engine from ONNX with Ampere GPU workarounds."""
+    print(f"\nBuilding engine: {Path(onnx_path).name} -> {Path(engine_path).name}")
+    print(f"  TensorRT {trt.__version__} | Precision: FP32")
+    
+    logger = TensorRTLogger()
     builder = trt.Builder(logger)
     network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
     parser = trt.OnnxParser(network, logger)
     
-    # Parse ONNX model
-    with open(onnx_path, 'rb') as model:
-        if not parser.parse(model.read()):
-            for error in range(parser.num_errors):
-                print(f"  ✗ Parser error: {parser.get_error(error)}")
-            raise RuntimeError("Failed to parse ONNX model")
+    with open(onnx_path, 'rb') as f:
+        if not parser.parse(f.read()):
+            print("  ✗ Parse failed:", logger.errors)
+            return False
     
-    # Configure builder
     config = builder.create_builder_config()
-    config.max_workspace_size = max_workspace_size
-    
-    # Set precision
-    if precision == 'fp16':
-        if builder.platform_has_fast_fp16:
-            config.set_flag(trt.BuilderFlag.FP16)
-            print("  ✓ Using FP16 precision")
-        else:
-            print("  ⚠ FP16 not supported on this platform, using FP32")
-    elif precision == 'int8':
-        if builder.platform_has_fast_int8:
-            config.set_flag(trt.BuilderFlag.INT8)
-            print("  ✓ Using INT8 precision")
-        else:
-            print("  ⚠ INT8 not supported on this platform, using FP32")
+    if hasattr(config, 'set_memory_pool_limit'):
+        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 2 << 30)
     else:
-        print("  ✓ Using FP32 precision")
+        config.max_workspace_size = 2 << 30
     
-    # Build engine
-    print("  Building TensorRT engine (this may take a while)...")
-    engine = builder.build_engine(network, config)
+    # Handle dynamic shapes
+    if any(-1 in network.get_input(i).shape for i in range(network.num_inputs)):
+        profile = builder.create_optimization_profile()
+        for i in range(network.num_inputs):
+            inp = network.get_input(i)
+            shape = [(1 if d == -1 else d, 1 if d == -1 else d, 512 if d == -1 else d) 
+                     for d in inp.shape]
+            profile.set_shape(inp.name, *zip(*shape))
+        config.add_optimization_profile(profile)
     
-    if engine is None:
-        raise RuntimeError("Failed to build TensorRT engine")
+    # Disable Cask for RTX 30-series compatibility
+    if hasattr(config, 'set_tactic_sources'):
+        tactics = sum(1 << int(getattr(trt.TacticSource, t)) 
+                     for t in ['CUDNN', 'CUBLAS', 'CUBLAS_LT'] 
+                     if hasattr(trt.TacticSource, t))
+        config.set_tactic_sources(tactics)
     
-    # Save engine
-    with open(engine_path, 'wb') as f:
-        f.write(engine.serialize())
+    if hasattr(trt.BuilderFlag, 'TF32'):
+        config.clear_flag(trt.BuilderFlag.TF32)
     
-    conversion_time = time.time() - start_time
-    print(f"  ✓ TensorRT engine built in {conversion_time:.3f}s")
-
-
-def convert_onnx_to_tensorrt_trtexec(
-    onnx_path: str,
-    engine_path: str,
-    precision: str = 'fp32',
-    max_batch_size: int = 1
-) -> None:
-    """
-    Convert ONNX model to TensorRT engine using trtexec command-line tool.
+    print("  Building (may take a minute)...")
+    start = time.time()
     
-    Args:
-        onnx_path: Path to ONNX model
-        engine_path: Path to save TensorRT engine
-        precision: Precision mode ('fp32', 'fp16', 'int8')
-        max_batch_size: Maximum batch size for optimization
-    """
-    print("Step 2: Converting ONNX to TensorRT engine (trtexec)...")
-    
-    # Check if trtexec is available
     try:
-        result = subprocess.run(['trtexec', '--help'], 
-                              capture_output=True, 
-                              timeout=5)
-        if result.returncode != 0:
-            raise FileNotFoundError
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        raise RuntimeError("trtexec not found. Please ensure TensorRT is installed "
-                          "and trtexec is in your PATH.")
+        if hasattr(builder, 'build_serialized_network'):
+            serialized = builder.build_serialized_network(network, config)
+            if serialized is None:
+                return False
+            Path(engine_path).write_bytes(serialized)
+        else:
+            engine = builder.build_engine(network, config)
+            if engine is None:
+                return False
+            Path(engine_path).write_bytes(engine.serialize())
+    except Exception as e:
+        print(f"  ✗ Build failed: {e}")
+        return False
     
-    # Build trtexec command
-    cmd = [
-        'trtexec',
-        '--onnx', onnx_path,
-        '--saveEngine', engine_path,
-        '--workspace', str(1 << 30),  # 1GB
-        '--maxBatch', str(max_batch_size),
-        '--verbose'
-    ]
-    
-    # Add precision flags
-    if precision == 'fp16':
-        cmd.append('--fp16')
-    elif precision == 'int8':
-        cmd.append('--int8')
-    
-    # Run trtexec
-    print(f"  Running: {' '.join(cmd)}")
-    start_time = time.time()
-    
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    
-    if result.returncode != 0:
-        print(f"  ✗ trtexec failed:")
-        print(result.stderr)
-        raise RuntimeError("Failed to build TensorRT engine with trtexec")
-    
-    conversion_time = time.time() - start_time
-    print(f"  ✓ TensorRT engine built in {conversion_time:.3f}s")
+    size = Path(engine_path).stat().st_size / (1024 * 1024)
+    print(f"  ✓ Built in {time.time()-start:.1f}s ({size:.1f} MB)")
+    return True
 
 
-def validate_tensorrt_model(
-    original_model: torch.nn.Module,
-    engine_path: str,
-    example_input: torch.Tensor,
-    device: str = 'cuda',
-    num_samples: int = 10
-) -> bool:
-    """
-    Validate that TensorRT model produces identical outputs to PyTorch model.
+def validate_engine(engine_path: str, example_input: np.ndarray, 
+                    model_info: tuple, tolerance: float = 1e-3) -> bool:
+    """Validate TensorRT engine against PyTorch model."""
+    import torch
+    from conversion.utils import load_model_from_checkpoint
     
-    Note: This is a simplified validation. Full TensorRT inference requires
-    proper context management and memory allocation.
+    print("\nValidating with PyCUDA...")
     
-    Args:
-        original_model: Original PyTorch model
-        engine_path: Path to TensorRT engine
-        example_input: Example input tensor
-        device: Device to run on
-        num_samples: Number of random samples to test
+    # Load engine
+    logger = trt.Logger(trt.Logger.WARNING)
+    with open(engine_path, 'rb') as f:
+        engine = trt.Runtime(logger).deserialize_cuda_engine(f.read())
+    if not engine:
+        return False
+    
+    context = engine.create_execution_context()
+    
+    # Get I/O info
+    input_name, output_names, output_shapes = None, [], []
+    for i in range(engine.num_io_tensors):
+        name = engine.get_tensor_name(i)
+        shape = engine.get_tensor_shape(name)
+        mode = engine.get_tensor_mode(name)
+        if mode == trt.TensorIOMode.INPUT:
+            input_name, input_shape = name, tuple(shape)
+        else:
+            output_names.append(name)
+            output_shapes.append(tuple(shape))
+    
+    # Handle dynamic shapes
+    if -1 in input_shape:
+        input_shape = tuple(example_input.shape)
+        context.set_input_shape(input_name, input_shape)
+        output_shapes = []
+        for name in output_names:
+            shape = tuple(context.get_tensor_shape(name))
+            if -1 in shape:
+                shape = tuple(input_shape[i] if shape[i] == -1 and i < len(input_shape) else 
+                            1 if shape[i] == -1 else shape[i] for i in range(len(shape)))
+            output_shapes.append(shape)
+    
+    # Load PyTorch model
+    model_class, model_kwargs, ckpt_path = model_info
+    pytorch_model, _ = load_model_from_checkpoint(model_class, ckpt_path, 'cpu', **model_kwargs)
+    pytorch_model.eval()
+    
+    # Allocate buffers
+    h_input = cuda.pagelocked_empty(int(np.prod(input_shape)), dtype=np.float32)
+    d_input = cuda.mem_alloc(h_input.nbytes)
+    h_outputs, d_outputs = [], []
+    for shape in output_shapes:
+        h = cuda.pagelocked_empty(int(np.prod([max(d, 1) for d in shape])), dtype=np.float32)
+        d_outputs.append(cuda.mem_alloc(h.nbytes))
+        h_outputs.append(h)
+    
+    stream = cuda.Stream()
+    context.set_tensor_address(input_name, int(d_input))
+    for name, d_out in zip(output_names, d_outputs):
+        context.set_tensor_address(name, int(d_out))
+    
+    # Run validation
+    passed, max_diffs, mean_diffs = 0, [], []
+    is_int_input = example_input.dtype in [np.int32, np.int64]
+    
+    for i in range(5):
+        if is_int_input:
+            test_int = np.random.randint(0, 1000, input_shape, dtype=np.int64)
+            test_input = test_int.astype(np.float32)
+        else:
+            test_input = np.random.randn(*input_shape).astype(np.float32)
         
-    Returns:
-        True if validation passes (or skipped if TensorRT Python API not available)
-    """
-    if not TENSORRT_AVAILABLE:
-        print("\n⚠ Skipping validation (TensorRT Python API not available)")
-        print("  To validate, install tensorrt package and ensure CUDA is available")
-        return True
+        with torch.no_grad():
+            pt_in = torch.from_numpy(test_int if is_int_input else test_input)
+            pt_out = pytorch_model(pt_in)
+            if isinstance(pt_out, tuple):
+                pt_out = pt_out[0]
+            pt_out = pt_out.numpy()
+        
+        np.copyto(h_input, test_input.ravel())
+        cuda.memcpy_htod_async(d_input, h_input, stream)
+        
+        if not context.execute_async_v3(stream_handle=stream.handle):
+            print(f"    ✗ Test {i+1}: Execution failed")
+            continue
+        
+        cuda.memcpy_dtoh_async(h_outputs[0], d_outputs[0], stream)
+        stream.synchronize()
+        
+        trt_out = h_outputs[0].reshape(output_shapes[0])
+        max_diff = np.abs(pt_out - trt_out).max()
+        mean_diff = np.abs(pt_out - trt_out).mean()
+        
+        max_diffs.append(max_diff)
+        mean_diffs.append(mean_diff)
+        
+        if max_diff <= tolerance:
+            print(f"    ✓ Test {i+1}: max_diff={max_diff:.2e}")
+            passed += 1
+        else:
+            print(f"    ✗ Test {i+1}: max_diff={max_diff:.2e} > {tolerance:.2e}")
     
-    if device != 'cuda':
-        print("\n⚠ Skipping validation (TensorRT requires CUDA)")
-        return True
+    if max_diffs:
+        print(f"  Accuracy: max={max(max_diffs):.2e}, mean={max(mean_diffs):.2e}")
     
-    print("\n⚠ TensorRT validation requires full inference setup")
-    print("  For production use, implement proper TensorRT inference with:")
-    print("  - Runtime deserialization")
-    print("  - Context creation")
-    print("  - Memory allocation and binding")
-    print("  - CUDA stream management")
-    print("  See TensorRT samples for reference implementation")
-    
-    # For now, just check that the engine file exists and is valid
-    if os.path.exists(engine_path) and os.path.getsize(engine_path) > 0:
-        print("  ✓ TensorRT engine file created successfully")
+    if passed >= 4:
+        print(f"  ✓ Validation passed ({passed}/5)")
         return True
     else:
-        print("  ✗ TensorRT engine file is invalid or missing")
+        print(f"  ✗ Validation failed ({passed}/5)")
         return False
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Convert PyTorch models to TensorRT optimized engines'
-    )
-    parser.add_argument(
-        '--model',
-        type=str,
-        required=True,
-        choices=['lenet', 'resnet18', 'lstm', 'gru'],
-        help='Model to convert'
-    )
-    parser.add_argument(
-        '--checkpoint',
-        type=str,
-        help='Path to model checkpoint (default: use MODEL_CONFIGS)'
-    )
-    parser.add_argument(
-        '--output',
-        type=str,
-        required=True,
-        help='Output path for TensorRT engine (.engine file)'
-    )
-    parser.add_argument(
-        '--precision',
-        type=str,
-        default='fp32',
-        choices=['fp32', 'fp16', 'int8'],
-        help='Precision mode (default: fp32)'
-    )
-    parser.add_argument(
-        '--max-batch-size',
-        type=int,
-        default=1,
-        help='Maximum batch size for optimization (default: 1)'
-    )
-    parser.add_argument(
-        '--opset',
-        type=int,
-        default=13,
-        help='ONNX opset version for intermediate conversion (default: 13)'
-    )
-    parser.add_argument(
-        '--device',
-        type=str,
-        default='cuda' if torch.cuda.is_available() else 'cpu',
-        help='Device to use for conversion'
-    )
-    parser.add_argument(
-        '--use-trtexec',
-        action='store_true',
-        help='Use trtexec command-line tool instead of Python API'
-    )
-    parser.add_argument(
-        '--validate',
-        action='store_true',
-        default=True,
-        help='Validate converted model (default: True)'
-    )
-    parser.add_argument(
-        '--keep-onnx',
-        action='store_true',
-        help='Keep intermediate ONNX file'
-    )
+def convert_model(model_name: str, validate: bool = True, tolerance: float = 1e-3) -> bool:
+    """Convert model from ONNX to TensorRT with validation."""
+    config = get_model_config(model_name)
+    onnx_src = Path(config['checkpoints']['onnx'])
+    engine_path = Path(config['checkpoints']['tensorrt'])
     
+    # Temp files
+    temp_work = Path(f'checkpoints/onnx/{model_name}_trt_work.onnx')
+    temp_fixed = Path(f'checkpoints/onnx/{model_name}_trt_fixed.onnx')
+    
+    try:
+        print(f"\n{'='*70}")
+        print(f"Converting {model_name.upper()} to TensorRT")
+        print(f"{'='*70}")
+        
+        if not onnx_src.exists():
+            print(f"✗ ONNX not found: {onnx_src}")
+            return False
+        
+        engine_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(onnx_src, temp_work)
+        
+        # Fix for RNN models
+        onnx_to_use = temp_fixed if fix_rnn_onnx(str(temp_work), str(temp_fixed)) else temp_work
+        
+        # Build engine
+        if not build_engine(str(onnx_to_use), str(engine_path)):
+            return False
+        
+        # Validate
+        if validate:
+            example_input = config['example_input']
+            if hasattr(example_input, 'numpy'):
+                example_input = example_input.cpu().numpy()
+            
+            model_info = (get_model_class(model_name), 
+                         config.get('kwargs', {}), 
+                         config['checkpoints']['pytorch'])
+            
+            if not validate_engine(str(engine_path), example_input, model_info, tolerance):
+                return False
+        
+        print(f"\n{'='*70}")
+        print(f"✓ {model_name.upper()} converted successfully")
+        print(f"{'='*70}\n")
+        return True
+        
+    finally:
+        # Cleanup temp files
+        for temp in [temp_work, temp_fixed]:
+            if temp.exists():
+                temp.unlink()
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Convert ONNX to TensorRT (FP32)')
+    parser.add_argument('--model', required=True, 
+                       choices=['lenet', 'resnet18', 'lstm', 'gru', 'all'],
+                       help='Model to convert')
+    parser.add_argument('--no-validate', action='store_true',
+                       help='Skip validation')
+    parser.add_argument('--tolerance', type=float, default=1e-3,
+                       help='Validation tolerance (default: 1e-3)')
     args = parser.parse_args()
     
-    # Check CUDA availability
-    if args.device == 'cuda' and not torch.cuda.is_available():
-        print("Warning: CUDA not available. TensorRT requires CUDA for optimal performance.")
-        args.device = 'cpu'
-    
-    # Get model configuration from centralized source
-    config = get_model_config(args.model)
-    checkpoint_path = args.checkpoint or config['checkpoints']['pytorch']
-    
-    print(f"\n{'='*60}")
-    print(f"Converting {args.model.upper()} to TensorRT Engine")
-    print(f"{'='*60}")
-    print(f"Checkpoint: {checkpoint_path}")
-    print(f"Output: {args.output}")
-    print(f"Precision: {args.precision}")
-    print(f"Max Batch Size: {args.max_batch_size}")
-    print(f"Device: {args.device}")
-    print(f"Method: {'trtexec' if args.use_trtexec else 'Python API'}")
-    print()
-    
-    # Create output directory
-    create_output_directory(args.output)
-    
-    # Create temporary ONNX file path
-    onnx_temp_path = str(Path(args.output).parent / f"{args.model}_temp.onnx")
-    
-    # Load original model
-    print("Loading PyTorch model...")
-    model_class = get_model_class(args.model)
-    model, checkpoint = load_model_from_checkpoint(
-        model_class=model_class,
-        checkpoint_path=checkpoint_path,
-        device=args.device,
-        **config['kwargs']
-    )
-    print(f"✓ Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
-    
-    # Step 1: Convert PyTorch to ONNX
-    convert_pytorch_to_onnx(
-        model=model,
-        example_input=config['example_input'],
-        onnx_path=onnx_temp_path,
-        opset_version=args.opset,
-        device=args.device
-    )
-    
-    # Step 2: Convert ONNX to TensorRT
-    try:
-        if args.use_trtexec:
-            convert_onnx_to_tensorrt_trtexec(
-                onnx_path=onnx_temp_path,
-                engine_path=args.output,
-                precision=args.precision,
-                max_batch_size=args.max_batch_size
-            )
-        else:
-            convert_onnx_to_tensorrt_python(
-                onnx_path=onnx_temp_path,
-                engine_path=args.output,
-                precision=args.precision,
-                max_batch_size=args.max_batch_size
-            )
-    except Exception as e:
-        print(f"\n✗ TensorRT conversion failed: {e}")
-        if not args.keep_onnx and os.path.exists(onnx_temp_path):
-            os.remove(onnx_temp_path)
-        return
-    
-    # Clean up intermediate ONNX file if not keeping it
-    if not args.keep_onnx and os.path.exists(onnx_temp_path):
-        os.remove(onnx_temp_path)
-        print(f"  ✓ Removed intermediate ONNX file")
-    
-    # Validate conversion
-    if args.validate:
-        is_valid = validate_tensorrt_model(
-            original_model=model,
-            engine_path=args.output,
-            example_input=config['example_input'],
-            device=args.device
-        )
+    if args.model == 'all':
+        models = ['lenet', 'resnet18', 'lstm', 'gru']
+        print(f"\nConverting all models to TensorRT...\n")
         
-        if not is_valid:
-            print("\n✗ Validation failed! Engine file may be invalid.")
-            return
-    
-    # Get file size
-    file_size = Path(args.output).stat().st_size / (1024 * 1024)  # MB
-    print(f"\n✓ Engine saved ({file_size:.2f} MB)")
-    
-    print(f"\n{'='*60}")
-    print("Conversion complete!")
-    print(f"{'='*60}\n")
+        results = {m: convert_model(m, not args.no_validate, args.tolerance) for m in models}
+        
+        print("\n" + "="*70)
+        print("CONVERSION SUMMARY")
+        print("="*70)
+        for name, success in results.items():
+            print(f"  {name:12s}: {'✓ SUCCESS' if success else '✗ FAILED'}")
+        print("="*70 + "\n")
+        
+        sys.exit(0 if all(results.values()) else 1)
+    else:
+        success = convert_model(args.model, not args.no_validate, args.tolerance)
+        sys.exit(0 if success else 1)
 
 
 if __name__ == '__main__':
     main()
-
