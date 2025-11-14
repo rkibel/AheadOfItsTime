@@ -26,6 +26,11 @@ ENV/
 env/
 .venv
 
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb_checkpoints/
@@ -40,21 +45,18 @@ data/wikitext/
 *.hdf5
 
 # Model checkpoints
-checkpoints/
-*.pth
-*.pt
-*.ckpt
-*.pb
-*.tflite
-*.engine
-*.plan
-*.onnx
+checkpoints/pytorch/*.pth
+checkpoints/pytorch/*.pt
+checkpoints/torchscript/*.pt
+checkpoints/onnx/*.onnx
+checkpoints/tensorflow/*/
+checkpoints/tensorrt/*.engine
+checkpoints/tensorrt/*.plan
 
-# Results
-results/benchmarks/
-results/plots/*.png
-results/plots/*.pdf
-results/reports/*.pdf
+# Benchmark results
+benchmarking/results/**/*.json
+benchmarking/results/**/plots/
+benchmarking/results/**/reports/
 
 # IDE
 .vscode/
@@ -85,3 +87,9 @@ mlruns/
 tmp/
 temp/
 *.tmp
+*.bak
+.mypy_cache/
+.ruff_cache/
+
+# Project-specific
+conversion/**/*_temp.onnx
