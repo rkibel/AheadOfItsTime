@@ -1,0 +1,43 @@
+name: "Full Benchmark Suite"
+description: "Comprehensive benchmark comparing all models and frameworks"
+
+# Models to benchmark
+models:
+  - lenet
+  - resnet18
+  - lstm
+  - gru
+
+# Frameworks to test
+frameworks:
+  - pytorch-eager
+  - torchscript
+  - pytorch-compile
+  - onnx
+  - tensorflow
+
+# Batch sizes to test
+batch_sizes:
+  - 1
+  - 8
+  - 32
+  - 128
+
+# Number of inference iterations
+num_iterations: 1000
+
+# Number of warmup iterations
+warmup_iterations: 100
+
+# Device (cuda or cpu)
+device: cuda
+
+# Output directory for results
+output_dir: "benchmarking/results/full_benchmark"
+
+# Profiling options
+profiling:
+  latency: true
+  memory: true
+  compilation: true
+

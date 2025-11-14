@@ -1,0 +1,36 @@
+name: "Quick Test"
+description: "Fast validation run for testing the benchmark pipeline"
+
+# Single model for quick testing
+models:
+  - lenet
+
+# Subset of frameworks
+frameworks:
+  - pytorch-eager
+  - torchscript
+  - onnx
+
+# Limited batch sizes
+batch_sizes:
+  - 1
+  - 8
+
+# Reduced iterations for speed
+num_iterations: 100
+
+# Reduced warmup
+warmup_iterations: 20
+
+# Device (cuda or cpu)
+device: cuda
+
+# Output directory for results
+output_dir: "benchmarking/results/quick_test"
+
+# Profiling options
+profiling:
+  latency: true
+  memory: true
+  compilation: true
+
