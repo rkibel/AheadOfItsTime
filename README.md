@@ -146,17 +146,17 @@ Modern frameworks increasingly blur these boundaries:
    - TorchScript (JIT and traced)
    - PyTorch 2.0 `torch.compile` (hybrid)
 
-2. **TensorFlow Ecosystem**
-   - TensorFlow 2.x eager (baseline dynamic)
-   - TensorFlow SavedModel + graph optimization (AOT)
-   - TensorFlow Lite (AOT for mobile/edge)
-
-3. **ONNX Runtime**
+2. **ONNX Runtime**
    - Standard ONNX Runtime (AOT with graph optimization)
    - ONNX Runtime with different execution providers (CPU, CUDA)
 
-4. **TensorRT** (stretch goal)
+3. **TensorRT**
    - TensorRT optimized engines (aggressive AOT)
+
+4. **TensorFlow Ecosystem** (stretch goal)
+   - TensorFlow 2.x eager (baseline dynamic)
+   - TensorFlow SavedModel + graph optimization (AOT)
+   - TensorFlow Lite (AOT for mobile/edge)
 
 ### Model Architectures
 
@@ -280,9 +280,9 @@ AheadOfItsTime/
 │
 ├── conversion/                 # Framework conversion scripts
 │   ├── to_torchscript.py
-│   ├── to_tensorflow.py
 │   ├── to_onnx.py
-│   ├── to_tensorrt.py         # Stretch goal
+│   ├── to_tensorrt.py
+│   ├── to_tensorflow.py       # Stretch goal
 │   └── utils.py
 │
 ├── benchmarking/              # Benchmarking infrastructure
@@ -308,9 +308,9 @@ AheadOfItsTime/
 │
 ├── checkpoints/               # Saved model weights
 │   ├── pytorch/
-│   ├── tensorflow/
 │   ├── onnx/
-│   └── tensorrt/
+│   ├── tensorrt/
+│   └── tensorflow/
 │
 ├── results/                   # Experimental results
 │   ├── benchmarks/            # Raw benchmark data
@@ -366,14 +366,14 @@ AheadOfItsTime/
 - PyTorch Ecosystem
   - [x] TorchScript (JIT and traced)
   - [ ] PyTorch 2.0 `torch.compile` (hybrid)
-- TensorFlow Ecosystem
+- ONNX Runtime
+  - [x] Standard ONNX Runtime (AOT with graph optimization)
+  - [x] ONNX Runtime with different execution providers (CPU, CUDA)
+- TensorRT
+  - [ ] TensorRT optimized engines (aggressive AOT)
+- TensorFlow Ecosystem (stretch goal)
   - [ ] TensorFlow SavedModel + graph optimization (AOT)
   - [ ] TensorFlow Lite (AOT for mobile/edge)
-- ONNX Runtime
-  - [ ] Standard ONNX Runtime (AOT with graph optimization)
-  - [ ] ONNX Runtime with different execution providers (CPU, CUDA)
-- TensorRT (stretch goal)
-  - [ ] TensorRT optimized engines (aggressive AOT)
 
 ### Week 3: Benchmarking
 - Build benchmarking harness
