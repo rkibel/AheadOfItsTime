@@ -4,7 +4,6 @@ torchvision>=0.15.0
 tensorflow>=2.13.0
 onnx>=1.14.0
 onnxruntime-gpu>=1.15.0  # GPU version
-onnx-tf>=1.10.0  # For ONNX to TensorFlow conversion
 
 # Data Processing
 numpy>=1.24.0
