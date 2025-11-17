@@ -42,9 +42,9 @@ This project addresses a critical concern in production ML systems: balancing ru
 
 The deep learning ecosystem is witnessing a convergence of traditionally distinct approaches:
 
-- **Static frameworks** (TensorFlow 1.x, ONNX Runtime, TensorRT) offer superior performance through aggressive graph-level optimizations but sacrifice runtime adaptability
-- **Dynamic frameworks** (PyTorch eager mode, TensorFlow 2.x eager) provide intuitive debugging and flexible control flow but face performance penalties
-- **Hybrid approaches** (PyTorch 2.0 with `torch.compile`, TensorFlow's AutoGraph, JAX) attempt to bridge this gap
+- **Static frameworks** (ONNX Runtime, TensorRT) offer superior performance through aggressive graph-level optimizations but sacrifice runtime adaptability
+- **Dynamic frameworks** (PyTorch eager mode) provide intuitive debugging and flexible control flow but face performance penalties
+- **Hybrid approaches** (PyTorch 2.0 with `torch.compile`, JAX) attempt to bridge this gap
 
 Understanding these tradeoffs is essential for:
 
@@ -62,7 +62,7 @@ Despite the importance of this topic, there exists a lack of comprehensive, repr
 ### Static Computation Graphs
 
 - **Definition**: The complete computational graph is defined before execution (graph definition phase separate from execution phase)
-- **Examples**: TensorFlow 1.x Sessions, ONNX models, TensorRT engines
+- **Examples**: ONNX models, TensorRT engines
 - **Advantages**:
   - Whole-graph optimization (operator fusion, memory planning, constant folding)
   - Efficient deployment on specialized hardware (GPUs, TPUs, edge devices)
@@ -75,7 +75,7 @@ Despite the importance of this topic, there exists a lack of comprehensive, repr
 ### Dynamic Computation Graphs
 
 - **Definition**: The graph is constructed on-the-fly during execution (define-by-run)
-- **Examples**: PyTorch eager mode, TensorFlow 2.x eager execution
+- **Examples**: PyTorch eager mode
 - **Advantages**:
   - Pythonic control flow (if/else, loops with dynamic conditions)
   - Easy debugging with standard tools
@@ -102,7 +102,7 @@ Despite the importance of this topic, there exists a lack of comprehensive, repr
   - Lazy compilation (compile as needed)
   - Can adapt to runtime information (actual tensor shapes, data types)
   - Amortized compilation cost over multiple runs
-  - Examples: PyTorch TorchScript JIT, JAX JIT compilation, TensorFlow AutoGraph
+  - Examples: PyTorch TorchScript JIT, JAX JIT compilation
 - **Use Cases**: Research environments, dynamic models, warm-up acceptable scenarios
 
 ### Hybrid Approaches
@@ -110,7 +110,6 @@ Despite the importance of this topic, there exists a lack of comprehensive, repr
 Modern frameworks increasingly blur these boundaries:
 
 - **PyTorch 2.0's `torch.compile`**: Uses TorchDynamo to capture graphs and TorchInductor for AOT compilation, with JIT fallback
-- **TensorFlow AutoGraph**: Converts Python control flow to graph operations
 - **JAX**: Traces functions into XLA HLO, compiles AOT, but with easy recompilation
 
 ---
@@ -152,11 +151,6 @@ Modern frameworks increasingly blur these boundaries:
 
 3. **TensorRT**
    - TensorRT optimized engines (aggressive AOT)
-
-4. **TensorFlow Ecosystem** (stretch goal)
-   - TensorFlow 2.x eager (baseline dynamic)
-   - TensorFlow SavedModel + graph optimization (AOT)
-   - TensorFlow Lite (AOT for mobile/edge)
 
 ### Model Architectures
 
@@ -282,7 +276,6 @@ AheadOfItsTime/
 │   ├── to_torchscript.py
 │   ├── to_onnx.py
 │   ├── to_tensorrt.py
-│   ├── to_tensorflow.py       # Stretch goal
 │   └── utils.py
 │
 ├── benchmarking/              # Benchmarking infrastructure
@@ -310,7 +303,7 @@ AheadOfItsTime/
 │   ├── pytorch/
 │   ├── onnx/
 │   ├── tensorrt/
-│   └── tensorflow/
+│   └── torchscript/
 │
 ├── results/                   # Experimental results
 │   ├── benchmarks/            # Raw benchmark data
@@ -370,20 +363,17 @@ AheadOfItsTime/
   - [x] Standard ONNX Runtime (AOT with graph optimization)
   - [x] ONNX Runtime with different execution providers (CPU, CUDA)
 - TensorRT
-  - [ ] TensorRT optimized engines (aggressive AOT)
-- TensorFlow Ecosystem (stretch goal)
-  - [ ] TensorFlow SavedModel + graph optimization (AOT)
-  - [ ] TensorFlow Lite (AOT for mobile/edge)
+  - [x] TensorRT optimized engines (aggressive AOT)
 
 ### Week 3: Benchmarking
-- Build benchmarking harness
-- Profiling integration, dynamic shape experiments
-- Run comprehensive benchmarks
+- [x] Build benchmarking harness
+- [x] Profiling integration, dynamic shape experiments
+- [x] Run comprehensive benchmarks
 
 ### Week 4: Analysis
-- Data analysis and visualization
-- Report writing, findings documentation
-- Presentation prep, final polish
+- [ ] Data analysis and visualization
+- [ ] Report writing, findings documentation
+- [ ] Presentation prep, final polish
 
 ---
 
@@ -440,11 +430,10 @@ python conversion/to_onnx.py \
     --opset 13 \
     --output checkpoints/onnx/resnet18.onnx
 
-# Convert to TensorFlow
-python conversion/to_tensorflow.py \
+# Convert to TensorRT
+python conversion/to_tensorrt.py \
     --model lenet \
-    --checkpoint checkpoints/pytorch/lenet_mnist.pth \
-    --output checkpoints/tensorflow/lenet_savedmodel/
+    --no-validate
 ```
 
 ### Running Benchmarks
