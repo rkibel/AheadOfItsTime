@@ -25,7 +25,6 @@ setup(
     install_requires=[
         "torch>=2.0.0",
         "torchvision>=0.15.0",
-        "tensorflow>=2.13.0",
         "onnx>=1.14.0",
         "onnxruntime-gpu>=1.15.0",
         "numpy>=1.24.0",

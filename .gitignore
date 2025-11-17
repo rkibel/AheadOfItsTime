@@ -49,7 +49,6 @@ checkpoints/pytorch/*.pth
 checkpoints/pytorch/*.pt
 checkpoints/torchscript/*.pt
 checkpoints/onnx/*.onnx
-checkpoints/tensorflow/*/
 checkpoints/tensorrt/*.engine
 checkpoints/tensorrt/*.plan
 

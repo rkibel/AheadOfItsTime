@@ -62,7 +62,7 @@ class BenchmarkConfig:
                 raise ValueError(f"Unknown model: {model}")
         
         # Check frameworks
-        valid_frameworks = ['pytorch-eager', 'torchscript', 'pytorch-compile', 'onnx']
+        valid_frameworks = ['pytorch-eager', 'torchscript', 'pytorch-compile', 'onnx', 'tensorrt']
         for framework in self.frameworks:
             if framework not in valid_frameworks:
                 raise ValueError(f"Unknown framework: {framework}")

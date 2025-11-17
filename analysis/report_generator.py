@@ -284,7 +284,7 @@ class ReportGenerator:
 
 This benchmark provides insights into the tradeoffs between AOT and JIT compilation strategies across different deep learning frameworks. Key findings include:
 
-1. **Compilation Overhead:** AOT-compiled models (ONNX, TensorFlow) have upfront compilation costs that must be amortized over multiple inferences.
+1. **Compilation Overhead:** AOT-compiled models (ONNX, TensorRT) have upfront compilation costs that must be amortized over multiple inferences.
 
 2. **Inference Performance:** Different frameworks show varying levels of optimization depending on model architecture.
 

@@ -14,7 +14,7 @@ frameworks:
   - torchscript
   - pytorch-compile
   - onnx
-  - tensorflow
+  - tensorrt
 
 # Batch sizes to test
 batch_sizes:
