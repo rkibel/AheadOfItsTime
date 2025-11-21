@@ -201,14 +201,21 @@ class BenchmarkVisualizer:
             batch_sizes = sorted(set(b['batch_size'] for b in model_benchmarks))
             frameworks = sorted(data.keys())
             
-            for framework in frameworks:
+            # Use different marker styles and line styles for better distinction
+            markers = ['o', 's', '^', 'D', 'v', 'p', '*', 'X']
+            linestyles = ['-', '--', '-.', ':']
+            
+            for idx, framework in enumerate(frameworks):
                 memory_values = [data[framework].get(bs, 0) for bs in batch_sizes]
-                ax.plot(batch_sizes, memory_values, marker='o', label=framework, linewidth=2)
+                marker = markers[idx % len(markers)]
+                linestyle = linestyles[idx % len(linestyles)]
+                ax.plot(batch_sizes, memory_values, marker=marker, linestyle=linestyle, 
+                       label=framework, linewidth=2, markersize=8)
             
             ax.set_xlabel('Batch Size')
             ax.set_ylabel('Peak Memory (MB)')
             ax.set_title(f'Memory Consumption - {model_name.upper()}')
-            ax.legend()
+            ax.legend(loc='best')
             ax.grid(alpha=0.3)
             
             plt.tight_layout()
