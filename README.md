@@ -358,7 +358,7 @@ AheadOfItsTime/
 ### Week 2: Multi-Framework
 - PyTorch Ecosystem
   - [x] TorchScript (JIT and traced)
-  - [ ] PyTorch 2.0 `torch.compile` (hybrid)
+  - [x] PyTorch 2.0 `torch.compile` (hybrid)
 - ONNX Runtime
   - [x] Standard ONNX Runtime (AOT with graph optimization)
   - [x] ONNX Runtime with different execution providers (CPU, CUDA)
