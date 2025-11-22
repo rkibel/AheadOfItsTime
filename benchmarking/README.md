@@ -41,7 +41,7 @@ python benchmarking/runner.py --config benchmarking/configs/full_benchmark.yaml
 Create plots from results:
 
 ```bash
-python analysis/visualize.py --results benchmarking/results/quick_test/benchmark_results_latest.json
+python analysis/visualize.py --results benchmarking/results/full_benchmark/benchmark_results_latest.json
 ```
 
 ### 4. Generate Report
@@ -49,7 +49,7 @@ python analysis/visualize.py --results benchmarking/results/quick_test/benchmark
 Create markdown report:
 
 ```bash
-python analysis/report_generator.py --results benchmarking/results/quick_test/benchmark_results_latest.json
+python analysis/report_generator.py --results benchmarking/results/full_benchmark/benchmark_results_latest.json
 ```
 
 ## Configuration
