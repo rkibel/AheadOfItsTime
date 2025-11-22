@@ -13,6 +13,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, List, Any, Tuple
 from collections import defaultdict
+from scipy import stats
 
 
 class BenchmarkAnalyzer:
@@ -243,6 +244,86 @@ class BenchmarkAnalyzer:
             }
         
         return {}
+    
+    def compare_frameworks_statistical(self, model: str, batch_size: int,
+                                      baseline_framework: str = 'pytorch-eager',
+                                      alpha: float = 0.05) -> Dict[str, Any]:
+        """
+        Perform statistical significance testing between frameworks.
+        
+        Since we only have single runs in the current setup, this generates
+        simulated distribution from P95/P99 values to estimate variance.
+        
+        Args:
+            model: Model name
+            batch_size: Batch size to analyze
+            baseline_framework: Framework to compare against
+            alpha: Significance level (default: 0.05)
+            
+        Returns:
+            Dictionary with statistical test results
+        """
+        results = {}
+        
+        # Get baseline benchmark
+        baseline_bench = next(
+            (b for b in self.benchmarks 
+             if b['model'] == model and b['batch_size'] == batch_size 
+             and b['framework'] == baseline_framework and 'latency' in b),
+            None
+        )
+        
+        if not baseline_bench:
+            return {}
+        
+        baseline_median = baseline_bench['latency']['median_ms']
+        baseline_p95 = baseline_bench['latency']['p95_ms']
+        baseline_p99 = baseline_bench['latency']['p99_ms']
+        
+        # Estimate standard deviation from percentiles
+        # Assuming log-normal distribution (common for latency)
+        baseline_std = (baseline_p95 - baseline_median) / 1.645
+        
+        # Compare against other frameworks
+        model_benchmarks = [b for b in self.benchmarks 
+                          if b['model'] == model and b['batch_size'] == batch_size 
+                          and b['framework'] != baseline_framework and 'latency' in b]
+        
+        for bench in model_benchmarks:
+            framework = bench['framework']
+            median = bench['latency']['median_ms']
+            p95 = bench['latency']['p95_ms']
+            
+            # Estimate std for this framework
+            framework_std = (p95 - median) / 1.645
+            
+            # Perform Welch's t-test (unequal variances)
+            # Using the t-statistic formula with estimated parameters
+            pooled_se = np.sqrt(baseline_std**2 + framework_std**2)
+            
+            if pooled_se > 0:
+                t_stat = (baseline_median - median) / pooled_se
+                
+                # Degrees of freedom (Welch-Satterthwaite)
+                df = ((baseline_std**2 + framework_std**2)**2 / 
+                     (baseline_std**4 + framework_std**4))
+                
+                # Two-tailed p-value
+                p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df))
+                
+                speedup = baseline_median / median if median > 0 else float('inf')
+                
+                results[framework] = {
+                    'speedup': speedup,
+                    'baseline_median_ms': baseline_median,
+                    'framework_median_ms': median,
+                    't_statistic': t_stat,
+                    'p_value': p_value,
+                    'significant': p_value < alpha,
+                    'effect_size': abs(baseline_median - median) / baseline_std if baseline_std > 0 else 0,
+                }
+        
+        return results
 
 
 def load_and_analyze(results_path: str) -> BenchmarkAnalyzer:
