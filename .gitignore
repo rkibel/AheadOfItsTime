@@ -74,7 +74,7 @@ mlruns/
 # Environment
 .env
 .env.local
-environment_*.yml
+environment*.yml
 
 # Profiling
 *.prof
