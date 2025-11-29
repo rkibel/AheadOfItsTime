@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from benchmarking.config import load_config, MODEL_CONFIGS, get_checkpoint_path
 from benchmarking.inference_engines import ENGINE_REGISTRY
-from benchmarking.profilers import LatencyProfiler, MemoryProfiler, CompilationProfiler
+from benchmarking.profilers import LatencyProfiler, MemoryProfiler, CompilationProfiler, EnergyProfiler
 
 
 class BenchmarkRunner:
@@ -195,6 +195,14 @@ class BenchmarkRunner:
                     )
                     result['compilation']['amortization'] = amortization
             
+            # Profile energy
+            if self.config.profile_energy:
+                energy_profiler = EnergyProfiler(engine)
+                energy_results = energy_profiler.profile(
+                    model_name, batch_size, self.config.num_iterations
+                )
+                result['energy'] = energy_results
+
             self.results['benchmarks'].append(result)
         
         # Cleanup

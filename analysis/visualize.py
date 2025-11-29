@@ -224,6 +224,59 @@ class BenchmarkVisualizer:
             plt.savefig(output_file, dpi=300, bbox_inches='tight')
             print(f"Saved: {output_file}")
             plt.close()
+
+    def plot_energy_efficiency(self, model: str = None) -> None:
+        """
+        Plot energy efficiency comparison across frameworks.
+        
+        Args:
+            model: Specific model to plot (None = all models)
+        """
+        models = [model] if model else list(set(b['model'] for b in self.benchmarks))
+        
+        for model_name in models:
+            model_benchmarks = [b for b in self.benchmarks 
+                              if b['model'] == model_name and 'energy' in b]
+            
+            if not model_benchmarks:
+                continue
+            
+            # Organize data by framework and batch size
+            data = defaultdict(dict)
+            for b in model_benchmarks:
+                framework = b['framework']
+                batch_size = b['batch_size']
+                efficiency = b['energy']['inferences_per_joule']
+                data[framework][batch_size] = efficiency
+            
+            # Create plot
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            batch_sizes = sorted(set(b['batch_size'] for b in model_benchmarks))
+            frameworks = sorted(data.keys())
+            
+            x = np.arange(len(batch_sizes))
+            width = 0.8 / len(frameworks)
+            
+            for i, framework in enumerate(frameworks):
+                efficiencies = [data[framework].get(bs, 0) for bs in batch_sizes]
+                offset = (i - len(frameworks)/2 + 0.5) * width
+                bars = ax.bar(x + offset, efficiencies, width, label=framework)
+            
+            ax.set_xlabel('Batch Size')
+            ax.set_ylabel('Efficiency (Inferences/Joule)')
+            ax.set_title(f'Energy Efficiency - {model_name.upper()}')
+            ax.set_xticks(x)
+            ax.set_xticklabels(batch_sizes)
+            ax.legend()
+            ax.grid(axis='y', alpha=0.3)
+            
+            plt.tight_layout()
+            
+            output_file = self.output_dir / f'energy_{model_name}.png'
+            plt.savefig(output_file, dpi=300, bbox_inches='tight')
+            print(f"Saved: {output_file}")
+            plt.close()
     
     def plot_speedup_heatmap(self, baseline: str = 'pytorch-eager') -> None:
         """
@@ -313,6 +366,7 @@ class BenchmarkVisualizer:
             self.plot_latency_comparison(model)
             self.plot_throughput_comparison(model)
             self.plot_memory_comparison(model)
+            self.plot_energy_efficiency(model)
         
         print("\nCreating speedup heatmap...")
         self.plot_speedup_heatmap()

@@ -53,6 +53,7 @@ class BenchmarkConfig:
         self.profile_latency = profiling.get('latency', True)
         self.profile_memory = profiling.get('memory', True)
         self.profile_compilation = profiling.get('compilation', True)
+        self.profile_energy = profiling.get('energy', False)
         
     def validate(self) -> None:
         """Validate configuration."""
