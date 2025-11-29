@@ -8,6 +8,7 @@ This benchmarking harness measures:
 - **Inference Latency**: Median, P95, P99 percentiles
 - **Memory Consumption**: Peak and average GPU memory usage
 - **Compile-time Overhead**: Time to compile/optimize models
+- **Energy Efficiency**: Power usage (Watts) and Inferences per Joule
 - **Throughput**: Samples per second at different batch sizes
 
 ## Supported Frameworks

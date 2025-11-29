@@ -40,4 +40,5 @@ profiling:
   latency: true
   memory: true
   compilation: true
+  energy: true
 

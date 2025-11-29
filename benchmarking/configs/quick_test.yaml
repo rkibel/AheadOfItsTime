@@ -4,12 +4,17 @@ description: "Fast validation run for testing the benchmark pipeline"
 # Single model for quick testing
 models:
   - lenet
+  - resnet18
+  - lstm
+  - gru
 
 # Subset of frameworks
 frameworks:
   - pytorch-eager
   - torchscript
+  - pytorch-compile
   - onnx
+  - tensorrt
 
 # Limited batch sizes
 batch_sizes:
@@ -33,4 +38,5 @@ profiling:
   latency: true
   memory: true
   compilation: true
+  energy: true
 
