@@ -30,6 +30,20 @@ class ONNXRuntimeEngine(InferenceEngine):
         self.input_name = None
         self.output_name = None
         
+        # Optimization cache
+        self.io_binding = None
+        self.cached_input_ptr = None
+        self.cached_input_shape = None
+        self.cached_output_tensor = None
+        
+        self.dtype_map = {
+            torch.float32: np.float32,
+            torch.float16: np.float16,
+            torch.int64: np.int64,
+            torch.int32: np.int32,
+            torch.bool: np.bool_,
+        }
+        
         if not ONNXRUNTIME_AVAILABLE:
             raise ImportError("onnxruntime not available. Install with: pip install onnxruntime-gpu")
         
@@ -42,7 +56,14 @@ class ONNXRuntimeEngine(InferenceEngine):
         
         # Configure execution providers
         if self.device == 'cuda':
-            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            providers = [
+                ('CUDAExecutionProvider', {
+                    'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                    'arena_extend_strategy': 'kSameAsRequested',
+                    'do_copy_in_default_stream': True,
+                }),
+                'CPUExecutionProvider'
+            ]
         else:
             providers = ['CPUExecutionProvider']
         
@@ -89,6 +110,91 @@ class ONNXRuntimeEngine(InferenceEngine):
         if not self._is_loaded:
             raise RuntimeError("Model not loaded. Call load_model() first.")
         
+        # Use IOBinding for CUDA to avoid CPU-GPU data transfer overhead
+        if self.device == 'cuda':
+            return self._infer_cuda(input_tensor)
+        
+        # CPU fallback
+        return self._infer_cpu(input_tensor)
+
+    def _infer_cuda(self, input_tensor: torch.Tensor) -> torch.Tensor:
+        """Run inference using IOBinding on CUDA."""
+        # Ensure tensor is contiguous
+        if not input_tensor.is_contiguous():
+            input_tensor = input_tensor.contiguous()
+            
+        # Initialize IOBinding if needed
+        if self.io_binding is None:
+            self.io_binding = self.session.io_binding()
+            
+        # Check if we need to re-bind input (pointer or shape changed)
+        current_ptr = input_tensor.data_ptr()
+        current_shape = tuple(input_tensor.shape)
+        
+        # If input shape changed, we must invalidate output cache because output shape likely changed
+        if current_shape != self.cached_input_shape:
+            self.cached_output_tensor = None
+        
+        if current_ptr != self.cached_input_ptr or current_shape != self.cached_input_shape:
+            numpy_dtype = self.dtype_map.get(input_tensor.dtype)
+            if numpy_dtype is None:
+                # Fallback to CPU if dtype not supported
+                return self._infer_cpu(input_tensor)
+                
+            # Bind input directly from GPU memory
+            self.io_binding.bind_input(
+                name=self.input_name,
+                device_type='cuda',
+                device_id=0,
+                element_type=numpy_dtype,
+                shape=current_shape,
+                buffer_ptr=current_ptr,
+            )
+            
+            # Update input cache
+            self.cached_input_ptr = current_ptr
+            self.cached_input_shape = current_shape
+            
+        # Handle output binding
+        if self.cached_output_tensor is None:
+            # Slow path: Let ORT allocate output
+            # Bind output to CUDA device (no buffer)
+            self.io_binding.bind_output(self.output_name, 'cuda', 0)
+            
+            # Run inference
+            self.session.run_with_iobinding(self.io_binding)
+            
+            # Get output as DLPack
+            ort_output = self.io_binding.get_outputs()[0]
+            
+            try:
+                from torch.utils.dlpack import from_dlpack
+                output_tensor = from_dlpack(ort_output.to_dlpack())
+                
+                # Allocate our own buffer for next time (must be on same device)
+                self.cached_output_tensor = torch.empty_like(output_tensor)
+                
+                # Bind this new buffer for FUTURE runs
+                numpy_dtype = self.dtype_map.get(self.cached_output_tensor.dtype)
+                self.io_binding.bind_output(
+                    name=self.output_name,
+                    device_type='cuda',
+                    device_id=0,
+                    element_type=numpy_dtype,
+                    shape=tuple(self.cached_output_tensor.shape),
+                    buffer_ptr=self.cached_output_tensor.data_ptr()
+                )
+                
+                return output_tensor
+            except Exception:
+                return self._infer_cpu(input_tensor)
+        else:
+            # Fast path: Output is already bound to self.cached_output_tensor
+            self.session.run_with_iobinding(self.io_binding)
+            return self.cached_output_tensor
+
+    def _infer_cpu(self, input_tensor: torch.Tensor) -> torch.Tensor:
+        """Run inference on CPU (with data copy)."""
         # Convert to numpy
         input_np = input_tensor.cpu().numpy()
         

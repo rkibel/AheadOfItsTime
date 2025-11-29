@@ -8,29 +8,24 @@ ONNX (Open Neural Network Exchange) provides:
 - Efficient deployment on edge devices
 
 Usage:
-    # Convert LeNet-5
-    python conversion/to_onnx.py --model lenet \\
-        --checkpoint checkpoints/pytorch/lenet_mnist.pth \\
-        --output checkpoints/onnx/lenet_mnist.onnx
-
-    # Convert with dynamic batch size
-    python conversion/to_onnx.py --model resnet18 \\
-        --checkpoint checkpoints/pytorch/resnet18_cifar10.pth \\
-        --output checkpoints/onnx/resnet18.onnx \\
-        --dynamic-batch
+    python conversion/to_onnx.py --model lenet
+    python conversion/to_onnx.py --model all
+    python conversion/to_onnx.py --model resnet18 --opset 14
 """
 
 import argparse
 import torch
 import time
 import sys
+import onnx
+import numpy as np
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Import centralized model configuration
-from models import get_model_config, get_model_class
+from models import get_model_config, get_model_class, is_rnn_model
 
 # Import conversion utilities
 from conversion.utils import (
@@ -48,115 +43,65 @@ except ImportError:
     print("Warning: onnxruntime not available. Validation will be skipped.")
 
 
-def convert_to_onnx(
-    model: torch.nn.Module,
-    example_input: torch.Tensor,
-    output_path: str,
-    input_names: list = None,
-    output_names: list = None,
-    dynamic_axes: dict = None,
-    opset_version: int = 13,
-    device: str = 'cpu',
-    verbose: bool = False
-) -> None:
-    """
-    Convert PyTorch model to ONNX format.
-    
-    Args:
-        model: PyTorch model in eval mode
-        example_input: Example input tensor for tracing
-        output_path: Path to save ONNX model
-        input_names: Names for input tensors
-        output_names: Names for output tensors
-        dynamic_axes: Dictionary specifying dynamic axes (for variable batch/sequence lengths)
-        opset_version: ONNX opset version to use
-        device: Device to run conversion on
-        verbose: Whether to print verbose output
-    """
-    model = model.to(device)
-    example_input = example_input.to(device)
-    
-    print(f"Converting to ONNX (opset {opset_version})...")
-    start_time = time.time()
-    
-    # Default input/output names
-    if input_names is None:
-        input_names = ['input']
-    if output_names is None:
-        output_names = ['output']
-    
-    # Export to ONNX
-    torch.onnx.export(
-        model,
-        example_input,
-        output_path,
-        input_names=input_names,
-        output_names=output_names,
-        dynamic_axes=dynamic_axes,
-        opset_version=opset_version,
-        do_constant_folding=True,  # Optimize constants
-        export_params=True,  # Export trained parameters
-        verbose=verbose,
-        keep_initializers_as_inputs=False
-    )
-    
-    conversion_time = time.time() - start_time
-    print(f"Conversion completed in {conversion_time:.3f}s")
-
-
 def validate_onnx_model(
     original_model: torch.nn.Module,
     onnx_path: str,
     example_input: torch.Tensor,
     device: str = 'cpu',
     num_samples: int = 10,
-    execution_provider: str = None
+    rtol: float = 1e-3,
+    atol: float = 1e-4
 ) -> bool:
     """
     Validate that ONNX model produces identical outputs to PyTorch model.
-    
-    Args:
-        original_model: Original PyTorch model
-        onnx_path: Path to ONNX model
-        example_input: Example input tensor
-        device: Device to run on
-        num_samples: Number of random samples to test
-        execution_provider: ONNX Runtime execution provider ('CPUExecutionProvider', 'CUDAExecutionProvider', etc.)
-        
-    Returns:
-        True if validation passes
     """
     if not ONNXRUNTIME_AVAILABLE:
-        print("\n⚠ Skipping validation (onnxruntime not available)")
+        print("  ⚠ Skipping validation (onnxruntime not available)")
         return True
     
-    print("\nValidating ONNX model...")
+    print("  Validating ONNX model...")
+    
+    # Verify ONNX model structure
+    try:
+        onnx_model = onnx.load(onnx_path)
+        onnx.checker.check_model(onnx_model)
+        print("  ✓ ONNX structure check passed")
+    except Exception as e:
+        print(f"  ✗ ONNX structure check failed: {e}")
+        return False
+
     original_model.eval()
     
     # Setup ONNX Runtime session
-    providers = []
-    if execution_provider:
-        providers = [execution_provider]
-    else:
-        # Auto-detect: prefer CUDA if available, else CPU
-        if device == 'cuda' and 'CUDAExecutionProvider' in ort.get_available_providers():
-            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-        else:
-            providers = ['CPUExecutionProvider']
+    providers = ['CPUExecutionProvider']
+    if device == 'cuda' and 'CUDAExecutionProvider' in ort.get_available_providers():
+        providers.insert(0, 'CUDAExecutionProvider')
     
-    session = ort.InferenceSession(onnx_path, providers=providers)
-    print(f"Using execution providers: {session.get_providers()}")
-    
+    try:
+        session = ort.InferenceSession(onnx_path, providers=providers)
+    except Exception as e:
+        print(f"  ✗ Failed to create ONNX Runtime session: {e}")
+        return False
+        
     # Get input/output names
     input_name = session.get_inputs()[0].name
     output_name = session.get_outputs()[0].name
     
     with torch.no_grad():
         for i in range(num_samples):
-            # Generate random input with same shape on the correct device
-            if example_input.dim() == 2:  # For RNNs (batch, seq_len)
-                test_input = torch.randint_like(example_input, 0, 1000).to(device)
-            else:  # For CNNs
+            # Generate random input
+            if example_input.dtype in [torch.int64, torch.int32]:
+                # For RNNs/Embeddings
+                # Vary sequence length for RNNs to test dynamic shapes
+                if is_rnn_model(original_model.__class__.__name__.lower()) or 'lstm' in str(type(original_model)).lower() or 'gru' in str(type(original_model)).lower():
+                    seq_len = torch.randint(10, 100, (1,)).item()
+                    # Keep batch size same as example_input for simplicity, or 1
+                    batch_size = example_input.shape[0]
+                    test_input = torch.randint(0, 1000, (batch_size, seq_len), dtype=example_input.dtype).to(device)
+                else:
+                    test_input = torch.randint_like(example_input, 0, 1000).to(device)
+            else:
+                # For CNNs
                 test_input = torch.randn_like(example_input).to(device)
             
             test_input_np = test_input.cpu().numpy()
@@ -171,47 +116,152 @@ def validate_onnx_model(
             original_output_np = original_output.detach().cpu().numpy()
             
             # Get ONNX Runtime output
-            onnx_output = session.run([output_name], {input_name: test_input_np})[0]
+            try:
+                onnx_output = session.run([output_name], {input_name: test_input_np})[0]
+            except Exception as e:
+                print(f"  ✗ Runtime execution failed: {e}")
+                return False
             
             # Validate
             is_valid, max_diff = validate_outputs(
                 torch.from_numpy(original_output_np),
                 torch.from_numpy(onnx_output),
-                rtol=5e-3,
-                atol=5e-3
+                rtol=rtol,
+                atol=atol
             )
             
             if not is_valid:
-                print(f"  ✗ Sample {i+1}: FAILED (max diff: {max_diff:.2e})")
+                print(f"    ✗ Sample {i+1}: FAILED (max diff: {max_diff:.2e})")
                 return False
             
-            print(f"  ✓ Sample {i+1}: PASSED (max diff: {max_diff:.2e})")
+            print(f"    ✓ Sample {i+1}: PASSED (max diff: {max_diff:.2e})")
     
-    print("\n✓ All validation tests passed!")
+    print("  ✓ All validation tests passed!")
     return True
 
 
+def convert_model(
+    model_name: str,
+    opset_version: int = 13,
+    validate: bool = True,
+    dynamic_batch: bool = True,
+    verbose: bool = False
+) -> bool:
+    """
+    Convert a specific model to ONNX format.
+    """
+    config = get_model_config(model_name)
+    checkpoint_path = config['checkpoints']['pytorch']
+    output_path = config['checkpoints']['onnx']
+    
+    print(f"\n{'='*70}")
+    print(f"Converting {model_name.upper()} to ONNX")
+    print(f"{'='*70}")
+    print(f"Checkpoint: {checkpoint_path}")
+    print(f"Output: {output_path}")
+    
+    # Create output directory
+    create_output_directory(output_path)
+    
+    # Determine device
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Device: {device}")
+    
+    try:
+        # Load model
+        print("Loading PyTorch model...")
+        model_class = get_model_class(model_name)
+        model, checkpoint = load_model_from_checkpoint(
+            model_class=model_class,
+            checkpoint_path=checkpoint_path,
+            device=device,
+            **config['kwargs']
+        )
+        print(f"✓ Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
+        
+        # Prepare example input
+        example_input = config['example_input'].to(device)
+        
+        # Setup dynamic axes
+        dynamic_axes = None
+        if dynamic_batch:
+            input_name = config['input_names'][0]
+            output_name = config['output_names'][0]
+            
+            dynamic_axes = {
+                input_name: {0: 'batch_size'},
+                output_name: {0: 'batch_size'}
+            }
+            
+            # For RNNs, sequence length should also be dynamic
+            if is_rnn_model(model_name):
+                dynamic_axes[input_name][1] = 'sequence_length'
+                # Only GRU (Language Model) has sequence length in output
+                # LSTM (Sentiment) has fixed output shape (batch, 1)
+                if model_name == 'gru':
+                    dynamic_axes[output_name][1] = 'sequence_length'
+                
+        print(f"Dynamic axes: {dynamic_axes}")
+        
+        # Export to ONNX
+        print(f"Exporting to ONNX (opset {opset_version})...")
+        start_time = time.time()
+        
+        torch.onnx.export(
+            model,
+            example_input,
+            output_path,
+            input_names=config['input_names'],
+            output_names=config['output_names'],
+            dynamic_axes=dynamic_axes,
+            opset_version=opset_version,
+            do_constant_folding=True,
+            export_params=True,
+            verbose=verbose,
+            keep_initializers_as_inputs=False
+        )
+        
+        conversion_time = time.time() - start_time
+        file_size = Path(output_path).stat().st_size / (1024 * 1024)
+        print(f"✓ Export completed in {conversion_time:.3f}s ({file_size:.2f} MB)")
+        
+        # Validate
+        if validate:
+            # Set tolerance based on model type
+            if is_rnn_model(model_name):
+                rtol = 1e-3
+                atol = 5e-3  # Relaxed for RNNs
+            else:
+                rtol = 1e-3
+                atol = 1e-3  # Slightly relaxed for CNNs (FP32 noise)
+
+            if not validate_onnx_model(
+                original_model=model,
+                onnx_path=output_path,
+                example_input=example_input,
+                device=device,
+                rtol=rtol,
+                atol=atol
+            ):
+                print("\n✗ Validation failed!")
+                return False
+                
+        print(f"\n✓ {model_name.upper()} converted successfully")
+        return True
+        
+    except Exception as e:
+        print(f"\n✗ Conversion failed: {e}")
+        return False
+
+
 def main():
-    parser = argparse.ArgumentParser(
-        description='Convert PyTorch models to ONNX format'
-    )
+    parser = argparse.ArgumentParser(description='Convert PyTorch models to ONNX format')
     parser.add_argument(
         '--model',
         type=str,
         required=True,
-        choices=['lenet', 'resnet18', 'lstm', 'gru'],
+        choices=['lenet', 'resnet18', 'lstm', 'gru', 'all'],
         help='Model to convert'
-    )
-    parser.add_argument(
-        '--checkpoint',
-        type=str,
-        help='Path to model checkpoint (default: use MODEL_CONFIGS)'
-    )
-    parser.add_argument(
-        '--output',
-        type=str,
-        required=True,
-        help='Output path for ONNX model'
     )
     parser.add_argument(
         '--opset',
@@ -220,32 +270,14 @@ def main():
         help='ONNX opset version (default: 13)'
     )
     parser.add_argument(
-        '--dynamic-batch',
+        '--no-validate',
         action='store_true',
-        help='Enable dynamic batch size'
+        help='Skip validation'
     )
     parser.add_argument(
-        '--dynamic-shapes',
+        '--no-dynamic',
         action='store_true',
-        help='Enable dynamic input shapes (for RNNs with variable sequence lengths)'
-    )
-    parser.add_argument(
-        '--device',
-        type=str,
-        default='cuda' if torch.cuda.is_available() else 'cpu',
-        help='Device to use for conversion'
-    )
-    parser.add_argument(
-        '--validate',
-        action='store_true',
-        default=True,
-        help='Validate converted model (default: True)'
-    )
-    parser.add_argument(
-        '--execution-provider',
-        type=str,
-        choices=['CPUExecutionProvider', 'CUDAExecutionProvider'],
-        help='ONNX Runtime execution provider for validation'
+        help='Disable dynamic batch size/shapes'
     )
     parser.add_argument(
         '--verbose',
@@ -255,81 +287,38 @@ def main():
     
     args = parser.parse_args()
     
-    # Get model configuration from centralized source
-    config = get_model_config(args.model)
-    checkpoint_path = args.checkpoint or config['checkpoints']['pytorch']
-    
-    print(f"\n{'='*60}")
-    print(f"Converting {args.model.upper()} to ONNX")
-    print(f"{'='*60}")
-    print(f"Checkpoint: {checkpoint_path}")
-    print(f"Output: {args.output}")
-    print(f"Opset Version: {args.opset}")
-    print(f"Device: {args.device}")
-    print(f"Dynamic Batch: {args.dynamic_batch}")
-    print(f"Dynamic Shapes: {args.dynamic_shapes}")
-    print()
-    
-    # Create output directory
-    create_output_directory(args.output)
-    
-    # Load original model
-    print("Loading PyTorch model...")
-    model_class = get_model_class(args.model)
-    model, checkpoint = load_model_from_checkpoint(
-        model_class=model_class,
-        checkpoint_path=checkpoint_path,
-        device=args.device,
-        **config['kwargs']
-    )
-    print(f"✓ Loaded model from epoch {checkpoint.get('epoch', 'unknown')}")
-    
-    # Setup dynamic axes if requested
-    dynamic_axes = None
-    if args.dynamic_batch or args.dynamic_shapes:
-        dynamic_axes = {
-            config['input_names'][0]: {0: 'batch_size'}
-        }
-        if args.dynamic_shapes and args.model in ['lstm', 'gru']:
-            # For RNNs, also make sequence length dynamic
-            dynamic_axes[config['input_names'][0]][1] = 'sequence_length'
-    
-    # Convert to ONNX
-    convert_to_onnx(
-        model=model,
-        example_input=config['example_input'],
-        output_path=args.output,
-        input_names=config['input_names'],
-        output_names=config['output_names'],
-        dynamic_axes=dynamic_axes,
-        opset_version=args.opset,
-        device=args.device,
-        verbose=args.verbose
-    )
-    
-    # Validate conversion
-    if args.validate:
-        is_valid = validate_onnx_model(
-            original_model=model,
-            onnx_path=args.output,
-            example_input=config['example_input'],
-            device=args.device,
-            execution_provider=args.execution_provider
-        )
+    if args.model == 'all':
+        models = ['lenet', 'resnet18', 'lstm', 'gru']
+        print(f"\nConverting all models to ONNX...\n")
         
-        if not is_valid:
-            print("\n✗ Validation failed! Model saved but outputs may differ.")
-            return
-    
-    # Get file size
-    file_size = Path(args.output).stat().st_size / (1024 * 1024)  # MB
-    print(f"\n✓ Model saved ({file_size:.2f} MB)")
-    
-    print(f"\n{'='*60}")
-    print("Conversion complete!")
-    print(f"{'='*60}\n")
+        results = {}
+        for m in models:
+            results[m] = convert_model(
+                model_name=m,
+                opset_version=args.opset,
+                validate=not args.no_validate,
+                dynamic_batch=not args.no_dynamic,
+                verbose=args.verbose
+            )
+        
+        print("\n" + "="*70)
+        print("CONVERSION SUMMARY")
+        print("="*70)
+        for name, success in results.items():
+            print(f"  {name:12s}: {'✓ SUCCESS' if success else '✗ FAILED'}")
+        print("="*70 + "\n")
+        
+        sys.exit(0 if all(results.values()) else 1)
+    else:
+        success = convert_model(
+            model_name=args.model,
+            opset_version=args.opset,
+            validate=not args.no_validate,
+            dynamic_batch=not args.no_dynamic,
+            verbose=args.verbose
+        )
+        sys.exit(0 if success else 1)
 
 
 if __name__ == '__main__':
     main()
-
