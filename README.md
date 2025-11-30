@@ -15,7 +15,7 @@
    - [Just-in-Time (JIT) Compilation](#just-in-time-jit-compilation)
    - [Hybrid Approaches](#hybrid-approaches)
 4. [Project Objectives](#project-objectives)
-5. [Technical Approach](#technical-approach)
+5. [Methodology](#methodology)
 6. [Architecture](#architecture)
 7. [Timeline](#timeline)
 8. [Usage](#usage)
@@ -136,7 +136,7 @@ Modern frameworks increasingly blur these boundaries:
 
 ---
 
-## Technical Approach
+## Methodology
 
 ### Frameworks & Runtimes Under Evaluation
 
@@ -157,12 +157,12 @@ Modern frameworks increasingly blur these boundaries:
 #### CNN Benchmarks
 
 1. **LeNet-5** (MNIST)
-   - Simple architecture: Conv → Pool → Conv → Pool → FC
+   - 2 convolutional layers (5x5 kernels), 3 fully connected layers
    - ~60K parameters
    - Tests basic convolutional optimization
 
 2. **ResNet-18** (CIFAR-10)
-   - Modern architecture with skip connections
+   - 18-layer residual network with skip connections (4 stages of BasicBlocks)
    - ~11M parameters
    - Tests operator fusion, memory optimization
 
@@ -170,18 +170,16 @@ Modern frameworks increasingly blur these boundaries:
 
 1. **LSTM Sentiment Classifier** (IMDB Reviews)
    - Binary sentiment classification (positive/negative reviews)
-   - Bidirectional LSTM with embedding layer
+   - 2-layer bidirectional LSTM with embedding layer
    - Variable sequence lengths (up to 512 tokens)
    - ~2M parameters
    - Tests recurrent operator optimization and variable-length handling
-   - Highlights dynamic unrolling challenges
 
 2. **GRU Language Model** (WikiText-2)
    - Word-level language modeling on Wikipedia text
-   - Stacked GRU architecture (2-3 layers)
+   - 2-layer stacked GRU architecture
    - ~5M parameters
    - Tests sequential dependencies and long-range context modeling
-   - Exposes compilation overhead for multi-layer RNNs
 
 ### Datasets
 
@@ -233,7 +231,7 @@ All datasets are well-established benchmarks, eliminating confounds from data co
 - **Hardware**: Document CPU/GPU specifications
 - **Trials**: 5 runs per configuration with different random seeds
 - **Warm-up**: 100 inferences before measurement to stabilize GPU clocks
-- **Monitoring**: NVIDIA nsys/nvprof for GPU profiling, `memory_profiler` for Python memory
+- **Monitoring**: PyTorch CUDA memory tracking for GPU memory profiling
 
 ---
 
