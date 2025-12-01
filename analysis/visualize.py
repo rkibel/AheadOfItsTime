@@ -353,6 +353,136 @@ class BenchmarkVisualizer:
         print(f"Saved: {output_file}")
         plt.close()
     
+    def plot_batch_summary_heatmaps(self, batch_size: int) -> None:
+        """
+        Create heatmaps for throughput, energy, memory, and speedup at a specific batch size.
+        
+        Args:
+            batch_size: Batch size to visualize
+        """
+        models = sorted(set(b['model'] for b in self.benchmarks))
+        frameworks = sorted(set(b['framework'] for b in self.benchmarks))
+        baseline = 'pytorch-eager'
+        
+        # Metrics to plot
+        metrics = [
+            ('throughput', 'samples_per_sec', 'Throughput (samples/sec)', 'Greens'),
+            ('energy', 'inferences_per_joule', 'Energy Efficiency (inf/J)', 'Greens'),
+            ('memory', 'peak_mb', 'Peak Memory (MB)', 'Reds_r')
+        ]
+        
+        # Plot standard metrics
+        for metric_key, value_key, title, colormap in metrics:
+            # Build data matrix
+            data_matrix = np.zeros((len(models), len(frameworks)))
+            
+            for i, model in enumerate(models):
+                for j, framework in enumerate(frameworks):
+                    bench = [b for b in self.benchmarks 
+                            if b['model'] == model and b['framework'] == framework 
+                            and b['batch_size'] == batch_size and metric_key in b]
+                    
+                    if bench:
+                        data_matrix[i, j] = bench[0][metric_key][value_key]
+            
+            # Create heatmap
+            fig, ax = plt.subplots(figsize=(len(frameworks)*1.5, len(models)*1.2))
+            
+            im = ax.imshow(data_matrix, cmap=colormap, aspect='auto')
+            
+            # Set ticks
+            ax.set_xticks(np.arange(len(frameworks)))
+            ax.set_yticks(np.arange(len(models)))
+            ax.set_xticklabels(frameworks, rotation=45, ha='right')
+            ax.set_yticklabels(models)
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label(title, rotation=270, labelpad=20)
+            
+            # Add text annotations
+            for i in range(len(models)):
+                for j in range(len(frameworks)):
+                    value = data_matrix[i, j]
+                    if value > 0:
+                        # Format based on metric
+                        if metric_key == 'memory':
+                            text_val = f'{value:.0f}'
+                        elif metric_key == 'energy':
+                            text_val = f'{value:.1f}'
+                        else:
+                            text_val = f'{value:.0f}'
+                        ax.text(j, i, text_val,
+                               ha="center", va="center", color="black", fontsize=9)
+            
+            ax.set_title(f'{title} (Batch Size = {batch_size})',
+                        fontsize=14, fontweight='bold')
+            plt.tight_layout()
+            
+            output_file = self.output_dir / f'{metric_key}_batch{batch_size}_heatmap.png'
+            plt.savefig(output_file, dpi=300, bbox_inches='tight')
+            print(f"Saved: {output_file}")
+            plt.close()
+        
+        # Plot speedup heatmap for this batch size
+        frameworks_no_baseline = sorted(set(b['framework'] for b in self.benchmarks 
+                                           if b['framework'] != baseline))
+        
+        if frameworks_no_baseline:
+            speedup_matrix = np.zeros((len(models), len(frameworks_no_baseline)))
+            
+            for i, model in enumerate(models):
+                # Get baseline latency
+                baseline_bench = [b for b in self.benchmarks 
+                                if b['model'] == model and b['framework'] == baseline 
+                                and b['batch_size'] == batch_size and 'latency' in b]
+                
+                if baseline_bench:
+                    baseline_latency = baseline_bench[0]['latency']['median_ms']
+                    
+                    for j, framework in enumerate(frameworks_no_baseline):
+                        # Get framework latency
+                        framework_bench = [b for b in self.benchmarks 
+                                         if b['model'] == model and b['framework'] == framework 
+                                         and b['batch_size'] == batch_size and 'latency' in b]
+                        
+                        if framework_bench:
+                            framework_latency = framework_bench[0]['latency']['median_ms']
+                            speedup = baseline_latency / framework_latency
+                            speedup_matrix[i, j] = speedup
+            
+            # Create speedup heatmap
+            fig, ax = plt.subplots(figsize=(len(frameworks_no_baseline)*1.5, len(models)*1.2))
+            
+            im = ax.imshow(speedup_matrix, cmap='RdYlGn', aspect='auto', vmin=0.5, vmax=2.0)
+            
+            # Set ticks
+            ax.set_xticks(np.arange(len(frameworks_no_baseline)))
+            ax.set_yticks(np.arange(len(models)))
+            ax.set_xticklabels(frameworks_no_baseline, rotation=45, ha='right')
+            ax.set_yticklabels(models)
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Speedup', rotation=270, labelpad=20)
+            
+            # Add text annotations
+            for i in range(len(models)):
+                for j in range(len(frameworks_no_baseline)):
+                    value = speedup_matrix[i, j]
+                    if value > 0:
+                        ax.text(j, i, f'{value:.2f}x',
+                               ha="center", va="center", color="black", fontsize=10)
+            
+            ax.set_title(f'Speedup Heatmap (Batch Size = {batch_size}, Baseline = {baseline})',
+                        fontsize=14, fontweight='bold')
+            plt.tight_layout()
+            
+            output_file = self.output_dir / f'speedup_batch{batch_size}_heatmap.png'
+            plt.savefig(output_file, dpi=300, bbox_inches='tight')
+            print(f"Saved: {output_file}")
+            plt.close()
+    
     def generate_all_plots(self) -> None:
         """Generate all visualizations."""
         print(f"\nGenerating visualizations...")
@@ -370,6 +500,12 @@ class BenchmarkVisualizer:
         
         print("\nCreating speedup heatmap...")
         self.plot_speedup_heatmap()
+        
+        print("\nCreating batch size 1 summary heatmaps...")
+        self.plot_batch_summary_heatmaps(batch_size=1)
+        
+        print("\nCreating batch size 128 summary heatmaps...")
+        self.plot_batch_summary_heatmaps(batch_size=128)
         
         print(f"\n✓ All visualizations saved to {self.output_dir}")
 
