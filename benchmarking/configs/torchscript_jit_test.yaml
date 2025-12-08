@@ -1,0 +1,35 @@
+# TorchScript JIT Compilation Benchmark
+# This config uses torchscript-jit which compiles at runtime (TRUE JIT)
+
+name: "TorchScript JIT vs Pre-compiled"
+description: "Compare TorchScript with runtime JIT compilation vs pre-compiled models"
+
+models:
+  - lenet
+  - resnet18
+  - lstm
+  - gru
+
+frameworks:
+  - pytorch-eager
+  - torchscript-jit
+  - pytorch-compile
+
+batch_sizes:
+  - 1
+  - 8
+  - 32
+  - 128
+
+# Profiling options
+num_iterations: 1000
+warmup_iterations: 100
+device: "cuda"
+
+# Profile compilation time, latency, memory, energy
+profile_compilation: true
+profile_latency: true
+profile_memory: true
+profile_energy: true
+
+output_dir: "benchmarking/results/full_benchmark"
